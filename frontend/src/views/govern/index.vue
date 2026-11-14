@@ -38,6 +38,7 @@
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
           <th>当前状态</th>
+          <th>保护依据</th>
           <th>可执行动作</th>
         </tr>
       </thead>
@@ -45,6 +46,16 @@
         <tr v-for="row in rows" :key="String(row.id)">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td>{{ row.status }}</td>
+          <td>
+            <span :class="row['保护依据'] === '可恢复保护' ? 'badge ok' : 'badge bad'">
+              {{ row['保护依据'] ?? '未引用快照' }}
+            </span>
+            <span v-if="row['保护说明']" class="protection-note">{{ row['保护说明'] }}</span>
+            <span
+              v-if="String(row.status) === '已停用' && row['停用原因']"
+              class="protection-note"
+            >{{ row['停用原因'] }}</span>
+          </td>
           <td class="row-actions">
             <button
               v-for="action in actions"
@@ -58,7 +69,7 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无存储治理数据，可先登记治理策略</td>
+          <td :colspan="columns.length + 3" class="empty-state">暂无存储治理数据，可先登记治理策略</td>
         </tr>
       </tbody>
     </table>
@@ -82,16 +93,23 @@ import {
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('govern')
-const columns = ["策略编号", "目标表名", "治理类型", "冷热判定字段", "生命周期天数", "归档目标", "回收站保留", "执行频率"]
-const actions = ["提交校验", "启用治理", "停用治理"]
-const statuses = ["草稿", "待校验", "已启用", "已停用"]
-const stats = [{"label": "治理策略总数", "value": 0}, {"label": "已启用策略", "value": 0}, {"label": "待校验策略", "value": 0}]
+const columns = ["策略编号", "目标表名", "快照策略编号", "治理类型", "冷热判定字段", "生命周期天数", "归档目标", "回收站保留", "执行频率"]
+const actions = meta.actions
+const statuses = meta.statuses
+const filterFields = columns.slice(0, 4)
 
 const rows = ref<EntryRow[]>([])
+const allRows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+
+const stats = computed(() => [
+  { label: meta.metrics[0], value: allRows.value.length },
+  { label: meta.metrics[1], value: allRows.value.filter((row) => String(row.status) === '已启用').length },
+  { label: meta.metrics[2], value: allRows.value.filter((row) => String(row.status) === '待校验').length },
+])
+
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
@@ -114,7 +132,11 @@ function openCreate() {
 
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
+  const payload: { expectedEvidenceVersion?: number } = {}
+  if (action === '启用治理' && row['快照策略编号']) {
+    payload.expectedEvidenceVersion = Number(row['保护证据版本'] ?? 0)
+  }
+  const result = applyAction(meta.key, Number(row.id), action, payload)
   if (!result.ok) {
     errorMessage.value = result.message
     return
@@ -128,6 +150,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    allRows.value = listEntries(meta.key).items
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '存储治理列表读取失败'
   }

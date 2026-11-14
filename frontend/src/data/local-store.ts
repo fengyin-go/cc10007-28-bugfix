@@ -8,9 +8,13 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+function hasStorage(): boolean {
+  return typeof window !== 'undefined' && Boolean(window.localStorage)
+}
+
 function readStorage(): Record<string, EntryRow[]> {
   const fallback = clone(SEED_ROWS)
-  if (typeof window === 'undefined' || !window.localStorage) {
+  if (!hasStorage()) {
     return fallback
   }
   const raw = window.localStorage.getItem(STORAGE_KEY)
@@ -27,13 +31,21 @@ function readStorage(): Record<string, EntryRow[]> {
   }
 }
 
-let cache: Record<string, EntryRow[]> | null = null
+// 没有浏览器存储（例如单测/构建期）时用内存兜底，保证读写仍然一致。
+let memory: Record<string, EntryRow[]> | null = null
 
+/**
+ * 每次都从 localStorage 读最新数据，避免本标签页缓存旧对象：
+ * 列表、详情和动作流转看到的是同一份数据，不会被另一个标签页或旧值覆盖。
+ */
 export function allRows(): Record<string, EntryRow[]> {
-  if (cache === null) {
-    cache = readStorage()
+  if (!hasStorage()) {
+    if (memory === null) {
+      memory = clone(SEED_ROWS)
+    }
+    return memory
   }
-  return cache
+  return readStorage()
 }
 
 export function listRows(key: string): EntryRow[] {
@@ -42,10 +54,11 @@ export function listRows(key: string): EntryRow[] {
 
 export function saveRows(key: string, rows: EntryRow[]): void {
   const next = { ...allRows(), [key]: rows }
-  cache = next
-  if (typeof window !== 'undefined' && window.localStorage) {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+  if (!hasStorage()) {
+    memory = next
+    return
   }
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
 }
 
 export function resetRows(key: string): EntryRow[] {
